@@ -28,7 +28,7 @@ So please make sure to use mutexs and locks wisely. Also beware of causing a [de
 * https://stackoverflow.com/questions/77585473/rust-tokio-how-to-handle-more-signals-than-just-sigint-i-e-sigquit
 * https://www.youtube.com/watch?v=zhbkp_Fzqoo
 
-thanks to @andreasklostermaier for all the suggestions
+thanks to [@andreasklostermaier](https://github.com/andreasklostermaier) for all the suggestions
 
 # License
 >You can check out the full license [here](https://github.com/bb-Ricardo/rust-tokio-signal-handling/blob/main/LICENSE.txt)

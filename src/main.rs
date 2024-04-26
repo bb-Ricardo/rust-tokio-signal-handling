@@ -4,12 +4,14 @@
 use tokio_util::sync::CancellationToken;
 use std::sync::{Arc, Mutex};
 
+// an example data structure to share between tasks
 #[derive(Debug, Default)]
 struct Shared {
     counter: u32,
     return_code: i32,
 }
 
+// define the max timeout we give the process to shut down before force quitting
 const SHUTDOWN_TIMEOUT_IN_SECONDS: u64 = 2;
 
 async fn write_data(shared: Arc<Mutex<Shared>>, token: CancellationToken) {
@@ -66,7 +68,7 @@ async fn wait_for_shutdown(token: CancellationToken) -> i32 {
     // Infos here:
     // https://www.gnu.org/software/libc/manual/html_node/Termination-Signals.html
 
-    // 
+    // more possible signals: https://github.com/tokio-rs/tokio/blob/master/tokio/src/signal/unix.rs#L68
     let mut signal_terminate = signal(SignalKind::terminate()).unwrap();
     let mut signal_interrupt = signal(SignalKind::interrupt()).unwrap();
 
@@ -91,6 +93,8 @@ async fn wait_for_shutdown(token: CancellationToken) -> i32 {
 
     // Infos here:
     // https://learn.microsoft.com/en-us/windows/console/handlerroutine
+
+    // https://github.com/tokio-rs/tokio/blob/master/tokio/src/signal/windows.rs
     let mut signal_c = windows::ctrl_c().unwrap();
     let mut signal_break = windows::ctrl_break().unwrap();
     let mut signal_close = windows::ctrl_close().unwrap();
@@ -125,7 +129,7 @@ async fn main() {
 
     // async function writing data
     let write_shared_copy = shared.clone();  // the Arc needs to be cloned in order to acquire a lock
-    let write_token = token.clone(); //
+    let write_token = token.clone(); // the token also needs to be cloned
     tracker.spawn(async move {
         write_data(write_shared_copy, write_token.clone()).await;
         if !write_token.is_cancelled() {
