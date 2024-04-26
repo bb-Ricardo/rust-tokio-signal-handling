@@ -10,34 +10,49 @@ struct Shared {
     return_code: i32,
 }
 
+const SHUTDOWN_TIMEOUT_IN_SECONDS: u64 = 2;
+
 async fn write_data(shared: Arc<Mutex<Shared>>, token: CancellationToken) {
 
     // Shall not cause data corruption
     loop {
-        // needs to be protected by signal masking
+
+        // check if task needs to quit
+        if token.is_cancelled() {
+            // The token was cancelled, task can shut down
+            println!("  Writing: CANCELED");
+            return;
+        }
+
+        // writing task which should not be interrupted
         {
-            println!("START writing data");
-            tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+            println!("  Writing: START writing data");
+            tokio::time::sleep(tokio::time::Duration::from_millis(3000)).await;
+
+            // acquire MUTEX lock
             {
                 let mut data = shared.lock().unwrap();
                 data.counter += 1;
             }
-            println!("END writing data");
+            // release lock by leaving the scope
+
+            println!("  Writing: END writing data");
         }
 
+        // check again if task needs to quit
         if token.is_cancelled() {
             // The token was cancelled, task can shut down
-            println!("WRITING CANCELED");
+            println!("  Writing: CANCELED");
             return;
         }
 
         // add possible condition to set return code on failed action
         if false {
-            {
-                let mut data = shared.lock().unwrap();
-                data.return_code = 1;
-            }
+            let mut data = shared.lock().unwrap();
+            data.return_code = 1;
         }
+
+        // some additional task to perform
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 }
@@ -50,12 +65,14 @@ async fn wait_for_shutdown(token: CancellationToken) -> i32 {
 
     // Infos here:
     // https://www.gnu.org/software/libc/manual/html_node/Termination-Signals.html
+
+    // 
     let mut signal_terminate = signal(SignalKind::terminate()).unwrap();
     let mut signal_interrupt = signal(SignalKind::interrupt()).unwrap();
 
     tokio::select! {
         _ = signal_interrupt.recv() => {
-            println!("Received Ctrl+C");
+            println!("Received SIGINT (Ctrl+C)");
             token.cancel();
             1
         },
@@ -107,14 +124,14 @@ async fn main() {
     println!("Creating temp file");
 
     // async function writing data
-    let write_shared_copy = shared.clone();
-    let write_token = token.clone();
+    let write_shared_copy = shared.clone();  // the Arc needs to be cloned in order to acquire a lock
+    let write_token = token.clone(); //
     tracker.spawn(async move {
         write_data(write_shared_copy, write_token.clone()).await;
         if !write_token.is_cancelled() {
-            println!("send cancel");
+            println!("  Writing: command finished: send cancel");
             write_token.cancel();
-            println!("after cancel");
+            println!("  Writing: command finished: after cancel");
         }
     });
 
@@ -123,27 +140,27 @@ async fn main() {
     tracker.spawn(async move {
         let mut counter: i32 = 0;
         let max_read = 30;
-        println!("Start polling worker");
+        println!("  Polling: worker");
         loop {
-            println!("  Polling start");
+            println!("  Polling: start poll");
             tokio::select! {
                 // Step 3: Using cloned token to listen to cancellation requests
                 _ = polling_token.cancelled() => {
                     // The token was cancelled, task can shut down
-                    println!("  POLLING CANCELED");
+                    println!("  Polling: CANCELED");
                     return;
                 }
                 _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
                     // Long work has completed
-                    println!("  Polling sleep finished");
+                    println!("  Polling: sleep finished");
                 }
             }
             counter += 1;
 
-            println!("  Polling #{counter} done");
+            println!("  Polling: #{counter} done");
 
             if counter >= max_read {
-                println!("Finished Reading");
+                println!("  Polling: Finished Reading (counter at max)");
                 polling_token.cancel();
                 return;
             }
@@ -160,16 +177,22 @@ async fn main() {
 
     println!("Shutdown initiated");
 
+    // add a timeout to force quite if shutdown takes way longer then expected
+    let emergency_token = CancellationToken::new();
+    let emergency_token_clone = emergency_token.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_secs(SHUTDOWN_TIMEOUT_IN_SECONDS)).await;
+        emergency_token_clone.cancel();
+    });
+
     // handle double Ctrl+C by user
     // force exit if shutdown process keeps hanging
     tokio::spawn(async move {
-        #[cfg(unix)]
-        let mut signal_interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).unwrap();
-        #[cfg(windows)]
-        let mut signal_interrupt = tokio::signal::windows::ctrl_c().unwrap();
-
-        signal_interrupt.recv().await;
-        println!("Double Ctrl+C");
+        if wait_for_shutdown(emergency_token.clone()).await == 0 {
+            println!("Shutdown timed out. QUIT");
+        } else {
+            println!("Double Ctrl+C by user/system. QUIT");
+        }
         std::process::exit(1);
     });
 
